@@ -40,11 +40,10 @@ Starts the 5x2 grid view and the visual synchronization controller.
 ```
 
 ### 3. Run Simulation
-Execute the parallel simulation suite.
 ```bash
 cd test_nmap_v1
-./run_multi.sh --id {ROUTE_ID} # Run a specific route simulation
-./run_multi.sh --reset         # Clear app data before running
+./run_single.sh --id {ROUTE_ID} # Run a specific route simulation
+./run_single.sh --reset         # Clear app data before running
 ```
 
 ### 4. Direct Device Commands

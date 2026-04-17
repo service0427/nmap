@@ -26,8 +26,14 @@ Java.perform(function() {
     }
 
     // --- 2. Action Logic (Native Touch) ---
-    function executeAgreement(wv) {
-        console.log("[Frida 🤖] 약관 동의 조작 시작 (네이티브 터치)");
+    function executeAgreement(wv, attempt) {
+        if (!attempt) attempt = 1;
+        if (attempt > 10) {
+            console.log("[Frida 🤖] 약관 동의 조작 포기 (타임아웃)");
+            return;
+        }
+
+        console.log("[Frida 🤖] 약관 동의 조작 시도 " + attempt + "/10 (네이티브 터치)");
         var location = Java.array('int', [0, 0]);
         wv.getLocationOnScreen(location);
         var wvX = location[0];
@@ -51,11 +57,16 @@ Java.perform(function() {
             "})();";
 
         wv.evaluateJavascript(jsPayload, Java.registerClass({
-            name: "com.frida.WebCallbackV10_" + Math.floor(Math.random()*1000),
+            name: "com.frida.WebCallbackV10_" + Math.floor(Math.random()*100000) + "_" + attempt,
             implements: [Java.use("android.webkit.ValueCallback")],
             methods: {
                 onReceiveValue: function(value) {
-                    if (!value || value === "null") return;
+                    if (!value || value === "null" || value === "[]") {
+                        setTimeout(function() {
+                            executeAgreement(wv, attempt + 1);
+                        }, 1000);
+                        return;
+                    }
                     var coords = JSON.parse(value.replace(/^"|"$/g, '').replace(/\\"/g, '"'));
                     var MotionEvent = Java.use("android.view.MotionEvent");
                     var SystemClock = Java.use("android.os.SystemClock");

@@ -13,7 +13,9 @@ fi
 BASE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../test_nmap_v1" &> /dev/null && pwd)"
 PKG_NAME="com.rosteam.gpsemulator"
 
-echo "Reloading GPS simulation (40-60 km/h) based on latest remaining routes..."
+echo "========================================================"
+echo "🚑 [경로 재탐색] 최신 잔여 경로 추출 및 GPS 강제 리로드 중..."
+echo "========================================================"
 
 for serial in $devices; do
     if [ -n "$TARGET" ] && [ "$serial" != "$TARGET" ]; then
@@ -35,7 +37,7 @@ for serial in $devices; do
     fi
     
     # Calculate a random speed between 40 and 60 km/h
-    TARGET_KMH=$(python3 -c "import random; print(round(random.uniform(40.0, 60.0), 1))")
+    TARGET_KMH=$(python3 -c "import random; print(round(random.uniform(90.0, 110.0), 1))")
     
     echo "    > Remaining Distance: $DISTANCE km | Auto-Speed: $TARGET_KMH km/h"
     

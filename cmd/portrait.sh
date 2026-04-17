@@ -24,6 +24,7 @@ for serial in $devices; do
     
     # 4. Ignore App's requested orientation (Forces apps like Naver Map to stay Portrait)
     adb -s "$serial" shell cmd window set-ignore-orientation-request true >/dev/null 2>&1 || true
+
 done
 
 echo "Done."

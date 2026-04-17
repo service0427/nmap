@@ -115,26 +115,35 @@ class ProxyCoreWash:
                     
                     decoded, msg_type = blackboxprotobuf.decode_message(raw_data)
                     if decoded:
-                        # [ATTACK] Location / Jitter field randomization
-                        def attack_recursive(o):
-                            c = 0
-                            if isinstance(o, dict):
-                                for k in list(o.keys()):
-                                    # Fused(5) -> LTE(3) Provider mutation
-                                    if str(k) == "1" and str(o[k]) == "5":
-                                        o[k] = 3
-                                        c += 1
-                                    elif str(k) in ["5", "6", "7"]:
-                                        if str(o[k]) in ["1065353216", "1.0", "0", "0.0"]:
-                                            o[k] = int(random.randint(1080000000, 1150000000))
+                        washed_fields = 0
+                        # [ATTACK & CLEANUP] Apply ONLY to trafficjam/location requests
+                        if "trafficjam/location" in path:
+                            def attack_recursive(o):
+                                c = 0
+                                if isinstance(o, dict):
+                                    for k in list(o.keys()):
+                                        # Fused(5) -> LTE(3) Provider mutation
+                                        if str(k) == "1" and str(o[k]) == "5":
+                                            o[k] = 3
                                             c += 1
-                                    elif isinstance(o[k], (dict, list)):
-                                        c += attack_recursive(o[k])
-                            elif isinstance(o, list):
-                                for i in o: c += attack_recursive(i)
-                            return c
-                        
-                        washed_fields = attack_recursive(decoded)
+                                        elif str(k) in ["5", "6", "7"]:
+                                            if str(o[k]) in ["1065353216", "1.0", "0", "0.0"]:
+                                                o[k] = int(random.randint(1080000000, 1150000000))
+                                                c += 1
+                                        elif isinstance(o[k], (dict, list)):
+                                            c += attack_recursive(o[k])
+                                elif isinstance(o, list):
+                                    for i in o: c += attack_recursive(i)
+                                return c
+                            
+                            washed_fields += attack_recursive(decoded)
+
+                            # [CLEANUP] Blanking WiFi data array to prevent common location correlation
+                            for w_key in ["4", 4]:
+                                if w_key in decoded and isinstance(decoded[w_key], list):
+                                    decoded[w_key] = []
+                                    washed_fields += 1
+
                         decoded = smart_cleanse(decoded, is_nlogapp)
                         encoded_payload = blackboxprotobuf.encode_message(decoded, msg_type)
                         if is_gzip: encoded_payload = _gzip.compress(encoded_payload)

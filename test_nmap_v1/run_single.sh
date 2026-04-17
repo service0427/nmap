@@ -145,14 +145,27 @@ adb -s "$DEV_ID" shell settings put global http_proxy :0 2>/dev/null
 adb -s "$DEV_ID" reverse --remove-all 2>/dev/null
 pkill -f "mitmdump.*$MITM_PORT" 2>/dev/null
 
+
 if [ "$IP_CHANGE_MODE" = true ]; then
     echo -e "${YELLOW}[$ALIAS] Toggling Airplane Mode to rotate Mobile IP...${NC}"
     adb -s "$DEV_ID" shell su -c "cmd connectivity airplane-mode enable"
     sleep 3
     adb -s "$DEV_ID" shell su -c "cmd connectivity airplane-mode disable"
     # Give mobile network time to physically attach to cell tower and get IP
-    echo -e "    > Waiting 5 seconds for network connection..."
-    sleep 5
+    echo -e "    > Waiting for network connection (pinging 8.8.8.8)..."
+    NETWORK_OK=false
+    for i in {1..15}; do
+        if adb -s "$DEV_ID" shell "ping -c 1 -W 1 8.8.8.8" >/dev/null 2>&1; then
+            echo -e "    > ${GREEN}[✓] Network connected! ($i/15)${NC}"
+            NETWORK_OK=true
+            break
+        fi
+        sleep 1
+    done
+    
+    if [ "$NETWORK_OK" = false ]; then
+        echo -e "    > ${YELLOW}[!] Network didn't connect within 15s. Proceeding anyway, but errors may occur.${NC}"
+    fi
 fi
 
 if [ "$RESET_MODE" = true ]; then

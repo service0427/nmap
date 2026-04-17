@@ -146,16 +146,18 @@ while true; do
                 echo -e "${YELLOW}[$(NOW)] [!] [$DEV_ID] 약관 동의 필요${NC}"
                 CONSENT_NEEDED=true
 
-                # 약관 클릭 액션: 체크박스 → 동의 버튼
-                DELAY=$(awk "BEGIN{printf \"%.1f\", 1.0 + rand() * 2.0}"  )
-                echo -e "${CYAN}[$(NOW)] [*] [$DEV_ID] ${DELAY}초 후 약관 체크박스 클릭...${NC}"
-                sleep "$DELAY"
-                $MACRO_EXEC "$DEV_ID" "agree_essential_service_1"
+                # 약관 클릭 액션: 백그라운드(subshell)로 실행하여 폴링 블로킹 방지 및 충분한 로딩 대기
+                (
+                    DELAY=$(awk "BEGIN{printf \"%.1f\", 4.0 + rand() * 2.0}"  )
+                    echo -e "${CYAN}[$(NOW)] [*] [$DEV_ID] 로딩 대기... ${DELAY}초 후 약관 체크박스 클릭...${NC}"
+                    sleep "$DELAY"
+                    $MACRO_EXEC "$DEV_ID" "agree_essential_service_1"
 
-                DELAY=$(awk "BEGIN{printf \"%.1f\", 1.0 + rand() * 2.0}")
-                echo -e "${CYAN}[$(NOW)] [*] [$DEV_ID] ${DELAY}초 후 동의 버튼 클릭...${NC}"
-                sleep "$DELAY"
-                $MACRO_EXEC "$DEV_ID" "btn_final_confirm"
+                    DELAY2=$(awk "BEGIN{printf \"%.1f\", 1.5 + rand() * 1.5}")
+                    echo -e "${CYAN}[$(NOW)] [*] [$DEV_ID] ${DELAY2}초 후 동의 버튼 클릭...${NC}"
+                    sleep "$DELAY2"
+                    $MACRO_EXEC "$DEV_ID" "btn_final_confirm"
+                ) &
             fi
         fi
 
