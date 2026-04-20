@@ -1,72 +1,18 @@
-# Naver Map Auto-Simulation Infrastructure
+# Naver Map Auto-Simulation Infrastructure (V2)
 
-This repository is a comprehensive infrastructure for managing and orchestrating a fleet of physical Android devices (Samsung Galaxy S20 series) to perform large-scale parallel simulation of driving paths and traffic on Naver Maps.
+## 🚀 V2 Core Architecture
 
-## 🚀 Project Overview
+V2는 V1의 물리적 의존성을 탈피하여, 실시간 패킷 검증과 순수 동적 UI 분석을 기반으로 하는 완전 무인 주행 오케스트레이션 시스템입니다.
 
-The system is designed to automate the entire lifecycle of a simulation device, from initial provisioning to real-time synchronized control and automated traffic generation.
+### 🛠 V2 핵심 원칙
+*   **Pure Dynamic UI (NO Hardcoding)**: 모든 UI 조작은 실시간 XML 덤프 분석을 통해 이루어집니다. 고정 좌표(`golden_bounds`)는 절대 사용하지 않으며, 텍스트와 리소스 ID 매칭으로만 작동합니다.
+*   **Atomic Packet Verification**: 모든 액션(클릭 등)은 앱이 서버로 보고하는 패킷을 확인한 뒤에만 성공으로 간주하고 전진합니다. (예: `nonloginterm.checkmapservice` 감지 시에만 체크 완료 판정)
+*   **Strict Session Isolation**: 모든 주행 데이터, XML 덤프, 스크린샷은 각 세션의 고유 로그 폴더(`logs/{DEV_ID}/{DATE}/{TIME}_{DEST_ID}/`) 내부에 격리 저장됩니다. 공용 폴더(`/tmp`, `screenshot/`) 사용은 엄격히 금지됩니다.
+*   **Visual-Structural Audit Pair**: 모든 클릭 시점의 화면은 `.png`와 멀티라인 `.xml` 쌍으로 기록되어 사후 분석을 완벽하게 보장합니다.
 
-### Key Components
-
-*   **Provisioning (`install.sh`)**: Automates the setup of new devices, including:
-    *   Installation of specific Naver Maps versions (v6.5.2.1), GPS Emulator, and ADBKeyboard.
-    *   System-level SSL certificate injection for traffic interception.
-    *   **WebView Downgrade**: Forcing Android System WebView to factory versions (v111 or lower) to bypass strict SSL checks introduced in v120+.
-*   **Visual Orchestration (`scr.sh`, `scrcpy/`)**:
-    *   Arranges up to 10 devices in a 5x2 grid for simultaneous monitoring.
-    *   **Visual Sync Pad**: A custom GUI (`scrcpy/sync_gui_control.py`) that provides a live preview of a master device and broadcasts all touch/text inputs to all connected slave devices.
-*   **Simulation Engine (`test_nmap_v1/`)**:
-    *   **`run_multi.sh`**: Parallel runner that launches simulation instances for all devices defined in `api/devices.json`.
-    *   **State-Machine Monitor (`utils/log_monitor.sh`)**: Non-blocking packet and UI state monitor. Automatically handles modal popups (Clova AI, Business Hours) via background subshells to avoid interrupting the main polling cycle.
-    *   **Dynamic UI Clicker (`utils/ui_clicker.py`)**: Uses local device XML dumps to dynamically seek and tap navigation elements (like `tab_car` and `btn_destination`) using exact text, `content-desc`, or `resource-id` bounds, entirely avoiding hardcoded layout coordinates.
-    *   **Intelligent GPS Hot-Reload (`utils/parse_remaining_route.py`, `cmd/reload.sh`)**: Extracts real-time `routeend` remaining distances directly from MITM proxy traffic to detect 'Stalls' (if vehicle stops moving for > 45s). Automatically injects new routes into the headless GPS emulator without touching device UI.
-    *   **Traffic Washing (`lib/mitm_addon.py`)**: Intercepts and modifies HTTPS traffic to anonymize device identities (ADID, SSAID, NI, IDFV, etc.) and inject jitter into location data using Protobuf mutation.
-    *   **Frida Integration**: Injects stability and network hooks (`lib/hooks/`) during app launch.
-*   **Device Utilities (`cmd.sh`, `cmd/`)**: A collection of surgical ADB scripts for mass device control (Home, Mute, Portrait mode, IP rotation via Airplane mode, etc.).
-
-## 🛠 Building and Running
-
-### 1. Device Setup
-Ensure devices are connected via ADB and rooted with Magisk.
-```bash
-./install.sh
-```
-
-### 2. Launch Monitoring & Sync Control
-Starts the 5x2 grid view and the visual synchronization controller.
-```bash
-./scr.sh         # Launch grid and sync pad
-./scr.sh --reset # Restart all windows and the controller
-```
-
-### 3. Run Simulation
-```bash
-cd test_nmap_v1
-./run_single.sh --id {ROUTE_ID} # Run a specific route simulation
-./run_single.sh --reset         # Clear app data before running
-```
-
-### 4. Direct Device Commands
-```bash
-./cmd.sh --home     # Send all devices to Home screen
-./cmd.sh --ip       # Rotate IP on all devices (Airplane mode toggle)
-./cmd.sh --mute     # Mute all devices
-```
-
-## 📂 Directory Structure
-
-*   `cmd/`: Individual ADB utility scripts.
-*   `docs/`: PDCA (Plan-Design-Do-Check-Act) development documents.
-*   `install/`: APKs, certificates, and Magisk modules for provisioning.
-*   `scrcpy/`: Window arrangement and synchronization logic.
-*   `test_nmap_v1/`: Core simulation logic, logs, and API configurations.
-    *   `api/`: Device and route configuration files.
-    *   `lib/`: MITM addons and Frida hooks.
-    *   `logs/`: Time-stamped logs for every device session.
-
-## 📝 Development Conventions
-
-*   **Identity Spoofing**: All device-specific identifiers are randomized at runtime in `test_nmap_v1/run_single.sh` and applied via `mitm_addon.py`.
-*   **Logging**: Every session generates a dedicated log folder containing `frida.log`, `mitm.log`, and `crash_debug.log`.
-*   **Resilience**: Use `run_multi.sh` for parallel tasks as it handles graceful shutdown (SIGINT) for all child processes.
-*   **SSL Interception**: Always ensure the `AlwaysTrustUserCerts` Magisk module is active on devices if HTTPS traffic fails to decrypt.
+### 📂 Directory Structure (V2 Isolation)
+*   `test_nmap_v2/`: 핵심 엔진 및 매크로 로직.
+*   `test_nmap_v2/logs/{DEV_ID}/.../`:
+    *   `execution.log`: 스케줄러 흐름.
+    *   `mitm.log`: 세탁된 패킷 로그.
+    *   `screenshot/01.{Category}/`: 시점별 스크린샷 및 멀티라인 XML 세트.

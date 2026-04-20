@@ -3,6 +3,11 @@
 # This script runs the scrcpy arrangement tool and automatically starts the Sync Controller.
 # Pass --reset to restart all windows and the controller.
 
+export DISPLAY="${DISPLAY:-:0}"
+if [ -z "$XAUTHORITY" ]; then
+    export XAUTHORITY="$HOME/.Xauthority"
+fi
+
 SCR_DIR="/home/tech/nmap/scrcpy"
 
 # 1. 만약 --reset 옵션이 있다면 기존 동기화 컨트롤러도 종료합니다.

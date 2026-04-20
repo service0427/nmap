@@ -127,7 +127,7 @@ class VisualSyncApp:
 
 if __name__ == "__main__":
     root = tk.Tk()
-    # AnyDesk screen space optimization for ultra-wide
-    root.geometry(f"{CANVAS_WIDTH + 50}x{CANVAS_HEIGHT + 200}")
+    # AnyDesk screen space optimization for ultra-wide and save current offset
+    root.geometry(f"{CANVAS_WIDTH + 50}x{CANVAS_HEIGHT + 200}+2735+64")
     app = VisualSyncApp(root)
     root.mainloop()
