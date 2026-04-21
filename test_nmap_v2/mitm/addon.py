@@ -3,6 +3,8 @@ import sys
 import random
 import threading
 import gzip
+import json
+import datetime
 from mitmproxy import http
 
 # Add repository root to python path to resolve mitm modules
@@ -26,8 +28,23 @@ class ProxyV2ClassicLog:
         self.base_log_dir = os.environ.get("CAPTURE_LOG_DIR", "logs/fallback")
         os.makedirs(self.base_log_dir, exist_ok=True)
         self.all_packets_path = os.path.join(self.base_log_dir, "all_packets.jsonl")
-        
+        self.summary_path = os.path.join(self.base_log_dir, "session_summary.json")
+        self.real_ip = os.environ.get("NMAP_REAL_IP", "Unknown")
 
+    def update_summary(self, data):
+        """Thread-safe update of session_summary.json"""
+        with self.lock:
+            try:
+                current = {}
+                if os.path.exists(self.summary_path):
+                    with open(self.summary_path, "r") as f:
+                        current = json.load(f)
+                
+                current.update(data)
+                with open(self.summary_path, "w") as f:
+                    json.dump(current, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                print(f" [!] Error updating summary: {e}")
 
     def try_pbf_decode(self, raw_bytes):
         """Helper to decode protobuf for logging"""
@@ -50,6 +67,19 @@ class ProxyV2ClassicLog:
         handle_request(self, flow)
 
     def response(self, flow: http.HTTPFlow):
+        # 1. Track Driving/Arrival Events for Timing
+        path = flow.request.path
+        if "global/driving" in path and flow.response.status_code == 200:
+            self.update_summary({
+                "driving_start_time": datetime.datetime.now().isoformat(),
+                "status": "DRIVING"
+            })
+        elif "nonloginterm/checkmapservice" in path and flow.response.status_code == 200:
+             self.update_summary({
+                "driving_end_time": datetime.datetime.now().isoformat(),
+                "status": "ARRIVED"
+            })
+
         handle_response(self, flow)
 
 addons = [ProxyV2ClassicLog()]

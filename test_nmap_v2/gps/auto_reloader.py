@@ -7,122 +7,206 @@ import subprocess
 import hashlib
 import datetime
 import random
+import math
+import traceback
 # reload_path.py의 고도화된 디코더를 그대로 활용
 from reload_path import RouteDecoder
 
+def get_now():
+    return datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+
+def log_print(msg):
+    print(f"[{get_now()}] {msg}")
+    sys.stdout.flush()
+
 def get_latest_driving_packet(log_dir):
-    """현재 로그 디렉토리에서 가장 최신의 v3/global/driving 패킷을 찾음"""
     pattern = os.path.join(log_dir, "*_GET_v3_global_driving.json")
     files = glob.glob(pattern)
-    if not files:
-        return None
+    if not files: return None
     try:
-        # 파일 인덱스(001, 119 등)를 기준으로 내림차순 정렬하여 가장 큰 번호(최신) 선택
         files.sort(key=lambda x: int(os.path.basename(x).split('_')[0]), reverse=True)
         return files[0]
-    except:
-        return None
+    except: return None
 
-def get_content_hash(body_str):
-    """데이터 변조 여부 확인을 위한 MD5 해시"""
-    return hashlib.md5(str(body_str).encode('utf-8', 'ignore')).hexdigest()
+def get_current_mock_location(device_id):
+    cmd = ["adb", "-s", device_id, "shell", "dumpsys location | grep -E 'last location=Location\\[.* [0-9]{2}\\.[0-9]+,[0-9]{3}\\.[0-9]+' | head -n 1"]
+    res = subprocess.run(cmd, capture_output=True, text=True).stdout.strip()
+    if not res:
+        cmd = ["adb", "-s", device_id, "shell", "dumpsys location | grep -E 'last mock location=Location\\[.* [0-9]{2}\\.[0-9]+,[0-9]{3}\\.[0-9]+' | head -n 1"]
+        res = subprocess.run(cmd, capture_output=True, text=True).stdout.strip()
+    try:
+        content = res.split("[")[1].split("]")[0]
+        parts = content.split()
+        for p in parts:
+            if "," in p:
+                lat, lng = map(float, p.split(","))
+                return lat, lng
+        return None, None
+    except: return None, None
+
+def set_simulator_speed(device_id, kmh):
+    speed_mps = round(kmh / 3.6, 6)
+    pkg = "com.rosteam.gpsemulator"
+    cmd = ["adb", "-s", device_id, "shell", "su -c", 
+           f"am start-foreground-service -n {pkg}/.servicex2484 -a ACTION_START_CONTINUOUS --es uy.digitools.RUTA 'ruta0' --ef velocidad {speed_mps} --ei loopMode 0"]
+    subprocess.run(cmd, capture_output=True)
+    log_print(f"[*] [🚀] Speed Adjusted: {kmh} km/h")
+
+def move_gps_to_target(device_id, target_lat, target_lng):
+    """2단계: 목적지 좌표로 GPS 순간이동"""
+    pkg = "com.rosteam.gpsemulator"
+    log_print(f"[🛡️] SAFETY STEP 2: Force Moving GPS to Target: {target_lat}, {target_lng}")
+    local_xml = f"/tmp/force_prefs_{device_id}.xml"
+    with open(local_xml, "w") as f:
+        f.write(f"<?xml version='1.0' encoding='utf-8' standalone='yes' ?>\n<map>\n")
+        f.write(f'    <boolean name="noads" value="true" />\n')
+        f.write(f'    <float name="velocidad" value="0.0" />\n')
+        f.write(f'    <string name="ruta0">Parking+1+0.0+0.0+{target_lat},{target_lng};{target_lat},{target_lng};</string>\n')
+        f.write(f'    <string name="lastloc">Current+{target_lat},{target_lng}+15.0</string>\n')
+        f.write(f"</map>")
+    prefs_path = f"/data/data/{pkg}/shared_prefs/{pkg}_preferences.xml"
+    subprocess.run(["adb", "-s", device_id, "shell", "am", "force-stop", pkg], capture_output=True)
+    subprocess.run(["adb", "-s", device_id, "push", local_xml, "/data/local/tmp/force_gps.xml"], capture_output=True)
+    subprocess.run(["adb", "-s", device_id, "shell", f"su -c 'cp /data/local/tmp/force_gps.xml {prefs_path} && chown $(stat -c %u:%g /data/data/{pkg}) {prefs_path} && chmod 660 {prefs_path} && rm /data/local/tmp/force_gps.xml'"], shell=True)
+    cmd = ["adb", "-s", device_id, "shell", "su -c", 
+           f"am start-foreground-service -n {pkg}/.servicex2484 -a ACTION_START_CONTINUOUS --es uy.digitools.RUTA 'ruta0' --ef velocidad 0.0 --ei loopMode 1"]
+    subprocess.run(cmd, capture_output=True)
+    if os.path.exists(local_xml): os.remove(local_xml)
+
+def trigger_back_sequence(device_id):
+    """3단계: 안내 강제 종료 (Back Key + 15s)"""
+    log_print(f"[🛡️] SAFETY STEP 3: No arrival signal. Sending 'Back' key and waiting 15s...")
+    subprocess.run(["adb", "-s", device_id, "shell", "input", "keyevent", "4"], capture_output=True)
+    time.sleep(15)
+    log_print(f"[✓] Safety Sequence Complete.")
+
+def update_session_summary(log_dir, data):
+    summary_path = os.path.join(log_dir, "session_summary.json")
+    try:
+        current = {}
+        if os.path.exists(summary_path):
+            with open(summary_path, "r") as f:
+                current = json.load(f)
+        current.update(data)
+        with open(summary_path, "w") as f:
+            json.dump(current, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        log_print(f" [!] Summary Update Fail: {e}")
 
 def main(log_dir, device_id):
-    # 1. Initialize Session Constraints
     try:
         min_arr = float(os.environ.get("NMAP_MIN_ARRIVAL", 10))
         max_arr = float(os.environ.get("NMAP_MAX_ARRIVAL", 30))
     except:
         min_arr, max_arr = 10, 30
     
-    # [V4.0] Fixed Total Target Duration for this session
     total_target_sec = random.randint(int(min_arr * 60), int(max_arr * 60))
     session_start_ts = time.time()
     
-    print(f"============================================================")
-    print(f"[*] [Auto-Reloader] Dynamic Sync Active: {device_id}")
-    print(f"[*] Monitoring: {log_dir}")
-    print(f"[*] Session Goal: Arrive within {total_target_sec}s ({total_target_sec/60:.1f} min)")
-    print(f"============================================================")
+    drive_state = "INIT"
+    coords_list = []
     
-    last_data_hash = None
-    min_dist = float('inf')  # [V3.2] Track minimum distance to prevent reverse jumps
+    # 정체 감지 및 안전 단계 변수
+    last_remaining_dist = 99999.9
+    stuck_count = 0
+    safety_stage = 0 # 0: Normal, 1: GPS Moved, 2: Finished
     
-    # [지침] 10초 대기 후 시작 (안내시작 후 안정화 시간)
-    time.sleep(10)
+    log_print(f"============================================================")
+    log_print(f"[*] [Auto-Reloader V7.7] Sequential Safety Monitor Started")
+    log_print(f"[*] Device ID      : {device_id}")
+    log_print(f"[*] Session Goal   : {total_target_sec}s ({total_target_sec/60:.1f} min)")
+    log_print(f"[*] Safety Config  : Stuck 30s -> Force Move -> (20s) -> Back key")
+    log_print(f"============================================================")
     
     while True:
-        now_str = datetime.datetime.now().strftime("%H:%M:%S")
-        latest_file = get_latest_driving_packet(log_dir)
-        
-        if not latest_file:
-            print(f"[{now_str}] [WAIT] No driving packets in logs. Waiting...")
-        else:
-            try:
-                filename = os.path.basename(latest_file)
-                # [V3.1] Retry logic for incomplete JSON files (mitm writing delay)
-                data = None
-                for _ in range(3):
-                    try:
-                        with open(latest_file, "r", encoding="utf-8") as f:
-                            data = json.load(f)
-                        break
-                    except json.JSONDecodeError:
-                        time.sleep(0.5)
-                
-                if not data:
-                    print(f"[{now_str}] [WARN] {filename} -> Still writing or invalid JSON. Skipping.")
-                    time.sleep(2)
-                    continue
-
-                res_body = data.get("response", {}).get("body", "")
-                
-                if not res_body:
-                    print(f"[{now_str}] [PASS] {filename} -> Empty response body.")
-                else:
-                    current_hash = get_content_hash(res_body)
-                    
-                    if current_hash == last_data_hash:
-                        print(f"[{now_str}] [PASS] {filename} -> No change (Hash: {current_hash[:8]})")
-                    else:
-                        # 신규 데이터 분석
-                        coords = RouteDecoder.decode_pbf_path(res_body)
-                        dist = RouteDecoder.calculate_distance(coords) if coords else 0
-                        
-                        if coords and len(coords) >= 5 and dist >= 0.1:
-                            # [V3.2] Distance Regression Guard: Prevent jumping back
-                            if dist > (min_dist + 0.05):
-                                print(f"[{now_str}] [🚫 REGRESSION] {filename} -> Distance increased: {dist:.2f}km > {min_dist:.2f}km. Skipping.")
-                                last_data_hash = current_hash
-                                continue
-
-                            # Update minimum distance
-                            if dist < min_dist:
-                                min_dist = dist
-
-                            print(f"[{now_str}] [🚀] UPDATING: {filename} ({dist:.2f} km, {len(coords)} pts)")
-                            script_dir = os.path.dirname(os.path.abspath(__file__))
+        try:
+            elapsed = int(time.time() - session_start_ts)
+            
+            if drive_state == "INIT":
+                latest_file = get_latest_driving_packet(log_dir)
+                if latest_file:
+                    with open(latest_file, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                    res_body = data.get("response", {}).get("body", "")
+                    if res_body:
+                        coords_list = RouteDecoder.decode_pbf_path(res_body)
+                        dist = RouteDecoder.calculate_distance(coords_list)
+                        if coords_list and dist >= 0.1:
+                            log_print(f"[📍] Initial Path Loaded: {dist:.2f} km")
                             
-                            # [V4.0] Pass session constraints to reloader
+                            # [NEW] Update Summary with Distance info
+                            update_session_summary(log_dir, {
+                                "total_distance_km": round(dist, 3),
+                                "path_loaded_time": datetime.datetime.now().isoformat()
+                            })
+                            
+                            script_dir = os.path.dirname(os.path.abspath(__file__))
                             env = os.environ.copy()
                             env["NMAP_TARGET_TOTAL_SEC"] = str(total_target_sec)
                             env["NMAP_SESSION_START_TS"] = str(session_start_ts)
-                            
-                            subprocess.run(["python3", os.path.join(script_dir, "reload_path.py"), latest_file, device_id], 
-                                           check=True, env=env)
-                            last_data_hash = current_hash
-                        else:
-                            print(f"[{now_str}] [SKIP] {filename} -> Invalid/Short ({dist:.2f} km).")
-                            last_data_hash = current_hash # 루프 방지용 기록
-                
-            except Exception as e:
-                print(f"[{now_str}] [!] Sync Loop Error: {e}")
-        
-        # [지침] 10초 주기 정밀 체크
+                            env["NMAP_INITIAL_DIST_KM"] = str(dist)
+                            subprocess.run(["python3", os.path.join(script_dir, "reload_path.py"), latest_file, device_id], check=True, env=env)
+                            drive_state = "MONITORING"
+                            log_print(f"[🛰️] State Transition: MONITORING")
+
+            elif drive_state == "MONITORING":
+                cur_lat, cur_lng = get_current_mock_location(device_id)
+                if cur_lat and coords_list:
+                    min_err = float('inf')
+                    start_idx = 0
+                    for i, (plat, plng) in enumerate(coords_list):
+                        err = math.sqrt((cur_lat - plat)**2 + (cur_lng - plng)**2)
+                        if err < min_err:
+                            min_err = err; start_idx = i
+                    remaining_dist = RouteDecoder.calculate_distance(coords_list[start_idx:])
+                    log_print(f"[🛣️] Progress: {remaining_dist:.2f} km remaining | Time: {elapsed}s / {total_target_sec}s")
+                    if remaining_dist <= 1.0:
+                        log_print(f"[⚠️] APPROACHING (<= 1.0km). Slowing to 40km/h.")
+                        set_simulator_speed(device_id, 40.0)
+                        drive_state = "SLOWDOWN_SENT"
+                        last_remaining_dist = remaining_dist
+                else:
+                    log_print("[?] Waiting for GPS update...")
+
+            elif drive_state == "SLOWDOWN_SENT":
+                cur_lat, cur_lng = get_current_mock_location(device_id)
+                if cur_lat and coords_list:
+                    min_err = float('inf')
+                    start_idx = 0
+                    for i, (plat, plng) in enumerate(coords_list):
+                        err = math.sqrt((cur_lat - plat)**2 + (cur_lng - plng)**2)
+                        if err < min_err:
+                            min_err = err; start_idx = i
+                    rem = RouteDecoder.calculate_distance(coords_list[start_idx:])
+                    log_print(f"[🏁] Arriving: {rem*1000:.0f}m to goal | Time: {elapsed}s / {total_target_sec}s")
+                    
+                    # 정체 감지
+                    if rem >= last_remaining_dist - 0.0001:
+                        stuck_count += 1
+                        # 2단계: 30초 정체 시 GPS 강제 이동
+                        if stuck_count == 3 and safety_stage == 0:
+                            move_gps_to_target(device_id, coords_list[-1][0], coords_list[-1][1])
+                            safety_stage = 1
+                        # 3단계: 강제 이동 후에도 20초(누적 50초) 정체 시 백키 시퀀스
+                        elif stuck_count >= 5 and safety_stage == 1:
+                            trigger_back_sequence(device_id)
+                            drive_state = "FORCED_FINISH"
+                    else:
+                        stuck_count = 0
+                    
+                    last_remaining_dist = rem
+                    if rem < 0.03:
+                        log_print("[✨] Destination reached.")
+                        time.sleep(30)
+            
+            elif drive_state == "FORCED_FINISH":
+                time.sleep(30)
+
+        except Exception as e:
+            log_print(f"[🔥] LOOP ERROR: {e}")
+
         time.sleep(10)
 
 if __name__ == "__main__":
-    if len(sys.argv) < 3:
-        print("Usage: python3 auto_reloader.py <LOG_DIR> <DEVICE_ID>")
-        sys.exit(1)
+    if len(sys.argv) < 3: sys.exit(1)
     main(sys.argv[1], sys.argv[2])
