@@ -112,7 +112,6 @@ adb -s "$DEV_ID" forward tcp:"$NMAP_FRIDA_PORT" tcp:27042 >/dev/null 2>&1
 nohup frida -H localhost:"$NMAP_FRIDA_PORT" --runtime=v8 -f "$PKG_NAME" \
     -l lib/hooks/network_hook.js \
     -l lib/hooks/_core_survival.js \
-    -l lib/hooks/macro_agreement.js \
     --no-auto-reload > "$FRIDA_LOG" 2>&1 &
 FRIDA_PID=$!
 

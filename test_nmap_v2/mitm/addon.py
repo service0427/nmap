@@ -27,7 +27,6 @@ class ProxyV2ClassicLog:
 
         self.base_log_dir = os.environ.get("CAPTURE_LOG_DIR", "logs/fallback")
         os.makedirs(self.base_log_dir, exist_ok=True)
-        self.all_packets_path = os.path.join(self.base_log_dir, "all_packets.jsonl")
         self.summary_path = os.path.join(self.base_log_dir, "session_summary.json")
         self.real_ip = os.environ.get("NMAP_REAL_IP", "Unknown")
 

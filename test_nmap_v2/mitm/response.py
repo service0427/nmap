@@ -102,5 +102,3 @@ def handle_response(addon, flow: http.HTTPFlow):
 
     with open(os.path.join(addon.base_log_dir, fn), "w") as f:
         json.dump(full_packet, f, ensure_ascii=False, indent=2)
-    with open(addon.all_packets_path, "a") as f:
-        f.write(json.dumps(full_packet, ensure_ascii=False) + "\n")

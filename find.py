@@ -80,7 +80,7 @@ class NaverPlaceFinder:
                 query = """
                     INSERT INTO destinations 
                     (dest_id, name, address, lat, lng, min_arrival, max_arrival, status)
-                    VALUES (%s, %s, %s, %s, %s, 3, 5, 'on')
+                    VALUES (%s, %s, %s, %s, %s, 6, 10, 'on')
                 """
                 cursor.execute(query, (info['id'], info['name'], info['address'], info['lat'], info['lng']))
                 db.commit()

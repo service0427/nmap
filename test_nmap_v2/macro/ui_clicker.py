@@ -29,28 +29,50 @@ def get_ui_dump_pair(device_id, category_name):
     png_file = os.path.join(target_dir, f"capture_{device_id}_{timestamp}.png")
     
     try:
-        subprocess.run(["adb", "-s", device_id, "shell", "uiautomator", "dump", "/sdcard/ui.xml"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        # [V2.5] Added timeout to prevent infinite hang of uiautomator dump
+        subprocess.run(["adb", "-s", device_id, "shell", "uiautomator", "dump", "/sdcard/ui.xml"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=15)
         temp_xml = f"/tmp/raw_{device_id}.xml"
-        subprocess.run(["adb", "-s", device_id, "pull", "/sdcard/ui.xml", temp_xml], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        subprocess.run(["adb", "-s", device_id, "pull", "/sdcard/ui.xml", temp_xml], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=10)
         tree = ET.parse(temp_xml)
         save_multiline_xml(tree.getroot(), xml_file)
         os.remove(temp_xml)
-        subprocess.run(["adb", "-s", device_id, "shell", "screencap", "-p", "/sdcard/screen.png"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-        subprocess.run(["adb", "-s", device_id, "pull", "/sdcard/screen.png", png_file], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+        subprocess.run(["adb", "-s", device_id, "shell", "screencap", "-p", "/sdcard/screen.png"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=10)
+        subprocess.run(["adb", "-s", device_id, "pull", "/sdcard/screen.png", png_file], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=10)
         return xml_file, png_file
+    except subprocess.TimeoutExpired:
+        print(f" [-] Capture Pair Timeout (15s)")
+        return None, None
     except Exception as e:
         print(f" [-] Capture Pair Fail: {e}")
         return None, None
 
+def check_fatal_errors(xml_file):
+    """Check for UI states that indicate definitive failure (No results, unreachable)"""
+    try:
+        tree = ET.parse(xml_file)
+        root = tree.getroot()
+        fatal_messages = [
+            "검색 결과가 없습니다",
+            "결과를 제공할 수 없습니다",
+            "검색 결과가 없어요",
+            "장소를 찾을 수 없습니다",
+            "길찾기 결과를 제공할 수 없습니다"
+        ]
+        for node in root.iter():
+            text = (node.get('text') or "").strip()
+            for msg in fatal_messages:
+                if msg in text:
+                    return True, text
+        return False, None
+    except:
+        return False, None
+
 def find_element(xml_file, query):
-    """Pure dynamic discovery with Smart Sibling Swap + Flexible Address Matching"""
+    """Pure dynamic discovery with Flexible Address Matching"""
     try:
         tree = ET.parse(xml_file)
         root = tree.getroot()
         mode, val = query.split(':', 1)
-        
-        # Build parent map for sibling discovery (Keep original robust logic)
-        parent_map = {c: p for p in root.iter() for c in p}
         
         matches = []
         for node in root.iter():
@@ -60,12 +82,20 @@ def find_element(xml_file, query):
             node_desc = (node.get('content-desc') or "")
             
             if mode == "text": 
-                # [NEW] Flexible matching for addresses (Last 3 words logic)
-                if " " in val and len(val.split()) >= 3:
-                    target_suffix = " ".join(val.split()[-3:])
-                    match = target_suffix in node_text
+                # [V2.3.1] Handle detail addresses by stripping after comma for long addresses
+                clean_val = val
+                if "," in clean_val and len(clean_val.split()) > 2:
+                    clean_val = clean_val.split(',')[0].strip()
+                
+                # [V2.3] Simple 'Whole Match' after skipping first 2 words
+                words = clean_val.split()
+                if len(words) > 2:
+                    match_target = " ".join(words[2:])
                 else:
-                    match = val in node_text
+                    match_target = clean_val
+                
+                # Check if our target address is within the node text as-is
+                match = match_target in node_text
             elif mode == "exact": match = node_text == val
             elif mode == "id": match = node_id == val
             elif mode == "desc": match = val in node_desc
@@ -101,40 +131,20 @@ def find_element(xml_file, query):
         matches.sort(key=lambda x: (-x['score'], x['area']))
         best = matches[0]
         
-        # [SMART HEURISTIC] Checkbox/Label sibling discovery for '필수' (Recovered)
-        if "필수" in val:
-            node = best['node']
-            search_nodes = []
-            parent = parent_map.get(node)
-            if parent is not None:
-                search_nodes.extend(list(parent))
-                grandparent = parent_map.get(parent)
-                if grandparent is not None:
-                    for sibling_parent in grandparent:
-                        search_nodes.extend(list(sibling_parent))
-
-            for s in search_nodes:
-                s_class = s.get('class', '')
-                s_bounds_str = s.get('bounds')
-                if not s_bounds_str: continue
-                s_coords = [int(c) for c in s_bounds_str.replace('][', ',').replace('[', '').replace(']', '').split(',')]
-                sx1, sy1, sx2, sy2 = s_coords
-                s_area = (sx2 - sx1) * (sy2 - sy1)
-                if ("Image" in s_class or "CheckBox" in s_class) and s_area > 100:
-                    bx1, by1, bx2, by2 = best['coords']
-                    if max(by1, sy1) < min(by2, sy2): # Vertical overlap
-                        if abs(sx1 - bx1) < 500:
-                            return s_coords, best['checked'], best['text']
-        
         return best['coords'], best['checked'], best['text']
     except Exception as e:
         print(f" [-] find_element Error: {e}")
         return None, False, None
 
 def report_fail(log_id, device_id, status, requested, actual, error):
-    """Report failure details to API Server"""
+    """Report failure details to API Server with current log path"""
     if not log_id: return
-    data = {"log_id": int(log_id), "device_id": device_id, "status": status, "requested_address": requested, "actual_address": actual, "error_msg": error}
+    log_path = os.environ.get("CAPTURE_LOG_DIR", "Unknown")
+    data = {
+        "log_id": int(log_id), "device_id": device_id, "status": status, 
+        "requested_address": requested, "actual_address": actual, 
+        "error_msg": error, "log_path": log_path
+    }
     try:
         subprocess.run(["curl", "-s", "-X", "POST", "http://localhost:5003/api/v1/update_status", "-H", "Content-Type: application/json", "-d", json.dumps(data)], stdout=subprocess.DEVNULL)
     except: pass
@@ -147,20 +157,18 @@ def click_element(device_id, query, padding=10, category="default"):
     for attempt in range(3):
         xml_path, png_path = get_ui_dump_pair(device_id, category)
         if not xml_path: time.sleep(2); continue
+
+        # [V2.6] Early Exit if Fatal Error Message is detected on screen
+        is_fatal, fatal_msg = check_fatal_errors(xml_path)
+        if is_fatal:
+            print(f" [!] FATAL UI STATE DETECTED: '{fatal_msg}'. Exiting immediately.")
+            report_fail(log_id, device_id, "FAIL_FATAL_UI_STATE", query, fatal_msg, f"Early exit due to: {fatal_msg}")
+            return False
             
         bounds, is_checked, actual_text = find_element(xml_path, query)
         if actual_text: last_actual_text = actual_text
         
-        # [V2.1 FALLBACK] TermsAgreement Coordinate Fallback (Recovered)
-        if not bounds and category == "TermsAgreement" and "동의" in query:
-            print(f" [!] Using Coordinate Fallback for TermsAgreement.")
-            bounds = [45, 1950, 1035, 2094]; is_checked = False
-
         if bounds:
-            if "필수" in query and is_checked:
-                print(f" [✓] {query} already checked. Skipping.")
-                return True
-
             x1, y1, x2, y2 = bounds
             rx_start, rx_end = sorted([x1 + padding, x2 - padding]); ry_start, ry_end = sorted([y1 + padding, y2 - padding])
             if rx_start >= rx_end: rx_end = rx_start + 1
@@ -183,18 +191,21 @@ def click_element(device_id, query, padding=10, category="default"):
     return False
 
 def chain_click(device_id, queries, padding=10, category="default", delay_range=(1.5, 3.5)):
-    """Executes a sequence of clicks with all robust logic (Recovered)"""
+    """Executes a sequence of clicks with all robust logic"""
     for attempt in range(3):
         xml_path, png_path = get_ui_dump_pair(device_id, category)
         if not xml_path: time.sleep(2); continue
         
+        # [V2.6] Early Exit if Fatal Error Message is detected on screen
+        is_fatal, fatal_msg = check_fatal_errors(xml_path)
+        if is_fatal:
+            print(f" [!] FATAL UI STATE DETECTED: '{fatal_msg}'. Exiting immediately.")
+            return False
+
         targets = []
         all_found = True
         for query in queries:
             bounds, is_checked, _ = find_element(xml_path, query)
-            if not bounds and category == "TermsAgreement" and "동의" in query:
-                bounds = [45, 1950, 1035, 2094]; is_checked = False
-            
             if bounds:
                 targets.append({'query': query, 'bounds': bounds, 'checked': is_checked})
             else:
@@ -204,7 +215,6 @@ def chain_click(device_id, queries, padding=10, category="default", delay_range=
             time.sleep(2); continue
 
         for i, target in enumerate(targets):
-            if "필수" in target['query'] and target['checked']: continue
             x1, y1, x2, y2 = target['bounds']
             rx_start, rx_end = sorted([x1+padding, x2-padding]); ry_start, ry_end = sorted([y1+padding, y2-padding])
             tx = random.randrange(rx_start, rx_end if rx_end > rx_start else rx_start+1)

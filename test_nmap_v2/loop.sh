@@ -51,8 +51,9 @@ while true; do
         if [ -n "$SCRIPT_PIDS" ]; then
             # 단순히 떠있는 것뿐만 아니라, 락파일의 생존 여부 확인
             LOCK_FILE="/tmp/nmap_lock_${DEV_ID}"
-            if [ -f "$LOCK_FILE" ]; then
-                AGE=$(( $(date +%s) - $(stat -c %Y "$LOCK_FILE") ))
+            LOCK_TIME=$(stat -c %Y "$LOCK_FILE" 2>/dev/null || echo 0)
+            if [ "$LOCK_TIME" -gt 0 ]; then
+                AGE=$(( $(date +%s) - LOCK_TIME ))
                 if [ $AGE -lt 45 ]; then
                     # 정상이므로 다음 기기로 넘어감
                     continue

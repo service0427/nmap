@@ -21,6 +21,7 @@ SCHEDULE_JSON="macro/action_schedule.json"
 # --- [CORE] Functions ---
 NOW() { date +"%H:%M:%S.%3N"; }
 START_TS=$(date +%s)
+GLOBAL_TIMEOUT=$(jq -r '.config.global_timeout // 1200' "$SCHEDULE_JSON")
 
 declare -A STATE_FLAGS
 
@@ -31,6 +32,16 @@ stop_gps() {
 
 check_app_survival() {
     local ELAPSED=$(( $(date +%s) - START_TS ))
+    
+    # 1. Global Timeout (Safety Net)
+    if [ $ELAPSED -gt "$GLOBAL_TIMEOUT" ]; then
+        echo "[$(NOW)] [🚨] GLOBAL TIMEOUT EXCEEDED (${ELAPSED}s / ${GLOBAL_TIMEOUT}s). Force killing..."
+        curl -s -X POST "http://localhost:5003/api/v1/update_status" -H "Content-Type: application/json" \
+             -d "{\"log_id\": $NMAP_LOG_ID, \"status\": \"FAIL_GLOBAL_TIMEOUT\", \"device_id\": \"$DEV_ID\", \"log_path\": \"$CAPTURE_LOG_DIR\"}" > /dev/null
+        adb -s "$DEV_ID" shell am force-stop "$PKG_NAME"; exit 1
+    fi
+
+    # 2. Process Survival Check
     if [ $ELAPSED -gt 30 ]; then
         if ! adb -s "$DEV_ID" shell pidof "$PKG_NAME" >/dev/null 2>&1; then
             echo "[$(NOW)] [!] App process dead. Stopping scheduler."; exit 1
@@ -107,17 +118,24 @@ while true; do
                     echo "[$(NOW)] [Action] Selecting Address: $NMAP_DEST_ADDR"
                     $MACRO_EXEC "$DEV_ID" "text:$NMAP_DEST_ADDR" "$CAT"
                     if [ $? -ne 0 ]; then
+                        # Report failure with Log Path and Requested Address
                         curl -s -X POST "http://localhost:5003/api/v1/update_status" -H "Content-Type: application/json" \
-                             -d "{\"log_id\": $NMAP_LOG_ID, \"status\": \"FAIL_ADDRESS_NOT_FOUND\", \"device_id\": \"$DEV_ID\"}" > /dev/null
+                             -d "{\"log_id\": $NMAP_LOG_ID, \"status\": \"FAIL_ADDRESS_NOT_FOUND\", \"device_id\": \"$DEV_ID\", \"requested_address\": \"$NMAP_DEST_ADDR\", \"log_path\": \"$CAPTURE_LOG_DIR\"}" > /dev/null
                         adb -s "$DEV_ID" shell am force-stop "$PKG_NAME"; exit 1
                     fi
                 elif [ "$ACTION" == "CLICK_ARRIVAL" ]; then
                     echo "[$(NOW)] [Action] Clicking '도착' (Arrival)..."
                     $MACRO_EXEC "$DEV_ID" "exact:도착" "$CAT"
                     [ $? -eq 0 ] && sleep 5 || break
-                elif [ "$ACTION" == "CLICK_CAR_TAB" ]; then
-                    $MACRO_EXEC "$DEV_ID" "id:com.nhn.android.nmap:id/tab_car" "$CAT"
-                    [ $? -ne 0 ] && break
+                elif [ "$ACTION" == "btn_start_guidance" ]; then
+                    echo "[$(NOW)] [Action] Clicking '안내시작' (Guidance Start)..."
+                    $MACRO_EXEC "$DEV_ID" "$ACTION" "$CAT"
+                    if [ $? -ne 0 ]; then
+                        # Report failure and EXIT to prevent infinite loop (e.g. GPS not fixed)
+                        curl -s -X POST "http://localhost:5003/api/v1/update_status" -H "Content-Type: application/json" \
+                             -d "{\"log_id\": $NMAP_LOG_ID, \"status\": \"FAIL_GUIDANCE_NOT_FOUND\", \"device_id\": \"$DEV_ID\", \"log_path\": \"$CAPTURE_LOG_DIR\"}" > /dev/null
+                        adb -s "$DEV_ID" shell am force-stop "$PKG_NAME"; exit 1
+                    fi
                 elif [ "$ACTION" == "EXIT_SUCCESS" ]; then
                     echo "[$(NOW)] [Action] GOAL REACHED. EXTRACTING ACTUAL STATS..."
                     ACTUAL_DIST=0; ACTUAL_TIME=0

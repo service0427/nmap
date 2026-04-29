@@ -30,9 +30,9 @@ def should_process(host: str, path: str) -> bool:
     path_lower = path.lower()
 
     # 1. 초입 필터: .naver.com, .navercorp.com, .naver.net 이 포함되지 않은 도메인은 모두 통과 (처리 대상에서 제외)
-    if ".naver.com" not in host_lower and ".navercorp.com" not in host_lower and ".naver.net" not in host_lower:
+    # if ".naver.com" not in host_lower and ".navercorp.com" not in host_lower and ".naver.net" not in host_lower:
         # 이 경우는 아예 무시하는 도메인이므로 로그를 남기지 않거나, 필요시 'EXTERNAL_DOMAIN'으로 기록 가능
-        return False
+        # return False
 
     # 2. 확장자 필터: 지정된 확장자가 경로에 포함되면 제외
     for ext in NOISE_EXTS:

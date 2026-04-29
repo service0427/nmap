@@ -63,12 +63,23 @@ def init_db():
             """)
 
         # 3. destinations Table
-        cursor.execute("SHOW COLUMNS FROM destinations")
-        cols = [c[0] for c in cursor.fetchall()]
-        if "daily_limit" not in cols:
-            cursor.execute("ALTER TABLE destinations ADD COLUMN daily_limit INT DEFAULT 5")
-        if "created_at" not in cols:
-            cursor.execute("ALTER TABLE destinations ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP")
+        cursor.execute("SHOW TABLES LIKE 'destinations'")
+        if not cursor.fetchone():
+            cursor.execute("""
+                CREATE TABLE destinations (
+                    dest_id VARCHAR(20) PRIMARY KEY,
+                    name VARCHAR(255),
+                    address VARCHAR(255),
+                    lat DOUBLE,
+                    lng DOUBLE,
+                    min_arrival INT DEFAULT 6,
+                    max_arrival INT DEFAULT 10,
+                    daily_limit INT DEFAULT 5,
+                    status VARCHAR(10) DEFAULT 'on',
+                    service_type VARCHAR(20) DEFAULT 'prod',
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
 
         # 4. daily_tasks Table (Summary Style - Recreated for simplicity)
         # Drop old structure if it has 'status' or other obsolete columns
@@ -77,17 +88,20 @@ def init_db():
         if "status" in dt_cols or "actual_dist" in dt_cols:
             print("[*] Recreating daily_tasks to Summary Style...")
             cursor.execute("DROP TABLE daily_tasks")
+            dt_cols = [] # Reset to trigger recreation
             
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS daily_tasks (
-                dest_id VARCHAR(20),
-                work_date DATE,
-                success_count INT DEFAULT 0,
-                last_assigned_at DATETIME,
-                last_success_at DATETIME,
-                PRIMARY KEY (dest_id, work_date)
-            )
-        """)
+        if not dt_cols:
+            cursor.execute("""
+                CREATE TABLE daily_tasks (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    dest_id VARCHAR(20),
+                    work_date DATE,
+                    success_count INT DEFAULT 0,
+                    last_assigned_at DATETIME,
+                    last_success_at DATETIME,
+                    UNIQUE KEY (dest_id, work_date)
+                )
+            """)
 
         # 5. fail_log Table
         cursor.execute("""
@@ -100,6 +114,7 @@ def init_db():
                 requested_address VARCHAR(255),
                 actual_address VARCHAR(255),
                 error_msg TEXT,
+                log_path TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
@@ -245,12 +260,13 @@ def update_status():
 
         # 3. Fail Log if needed
         if "FAIL" in status:
+            log_path = data.get('log_path')
             cursor.execute("SELECT dest_id FROM task_log WHERE id = %s", (log_id,))
             dest_row = cursor.fetchone()
             cursor.execute("""
-                INSERT INTO fail_log (log_id, device_id, dest_id, fail_status, requested_address, actual_address, error_msg)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-            """, (log_id, device_id, dest_row[0] if dest_row else "Unknown", status, req_addr, act_addr, err_msg))
+                INSERT INTO fail_log (log_id, device_id, dest_id, fail_status, requested_address, actual_address, error_msg, log_path)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """, (log_id, device_id, dest_row[0] if dest_row else "Unknown", status, req_addr, act_addr, err_msg, log_path))
 
         db.commit(); db.close()
         return jsonify({"status": "ok"})
