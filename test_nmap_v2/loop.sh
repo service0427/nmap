@@ -32,7 +32,16 @@ get_devices() {
     if [ -n "$SINGLE_DEV_ID" ]; then echo "$SINGLE_DEV_ID"; else adb devices | grep -w "device" | awk '{print $1}'; fi
 }
 
+LAST_CLEANUP=0
 while true; do
+    # --- [AUTO CLEANUP] Keep only 7 days of logs ---
+    CUR_TS=$(date +%s)
+    if [ $((CUR_TS - LAST_CLEANUP)) -gt 3600 ]; then
+        log_info "Cleanup: Removing logs older than 7 days..."
+        find "$(dirname "$0")/logs" -mindepth 2 -maxdepth 2 -type d -mtime +7 -exec rm -rf {} + 2>/dev/null
+        LAST_CLEANUP=$CUR_TS
+    fi
+
     DEVICES=$(get_devices)
     if [ -z "$DEVICES" ]; then
         log_info "No devices detected. Retrying in 10s..."
