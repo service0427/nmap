@@ -59,7 +59,7 @@ if [ "$NMAP_NO_IP" != "true" ]; then
     done
     
     # Update Status to Server with Real IP
-    curl -s -X POST "http://localhost:5003/api/v1/update_status" \
+    curl -s -X POST "http://${API_SERVER:-localhost:5003}/api/v1/update_status" \
          -H "Content-Type: application/json" \
          -d "{\"log_id\": $NMAP_LOG_ID, \"status\": \"IP_CHANGED\", \"device_id\": \"$DEV_ID\", \"real_ip\": \"$REAL_IP\"}" > /dev/null
     export NMAP_REAL_IP="$REAL_IP"

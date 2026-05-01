@@ -145,8 +145,9 @@ def report_fail(log_id, device_id, status, requested, actual, error):
         "requested_address": requested, "actual_address": actual, 
         "error_msg": error, "log_path": log_path
     }
+    api_server = os.environ.get('API_SERVER', 'localhost:5003')
     try:
-        subprocess.run(["curl", "-s", "-X", "POST", "http://localhost:5003/api/v1/update_status", "-H", "Content-Type: application/json", "-d", json.dumps(data)], stdout=subprocess.DEVNULL)
+        subprocess.run(["curl", "-s", "-X", "POST", f"http://{api_server}/api/v1/update_status", "-H", "Content-Type: application/json", "-d", json.dumps(data)], stdout=subprocess.DEVNULL)
     except: pass
 
 def click_element(device_id, query, padding=10, category="default"):

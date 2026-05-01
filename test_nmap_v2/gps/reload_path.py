@@ -138,7 +138,8 @@ def run_reload(packet_file, device_id):
         log_id = os.environ.get("NMAP_LOG_ID")
         if log_id:
             report_data = {"log_id": log_id, "applied_speed": final_kmh, "status": "DRIVING", "remaining_dist": dist_km}
-            subprocess.run(["curl", "-s", "-X", "POST", "http://localhost:5003/api/v1/update_status", "-H", "Content-Type: application/json", "-d", json.dumps(report_data)], stdout=subprocess.DEVNULL)
+            api_server = os.environ.get('API_SERVER', 'localhost:5003')
+            subprocess.run(["curl", "-s", "-X", "POST", f"http://{api_server}/api/v1/update_status", "-H", "Content-Type: application/json", "-d", json.dumps(report_data)], stdout=subprocess.DEVNULL)
         
     finally:
         if os.path.exists(temp_route): os.remove(temp_route)

@@ -8,6 +8,7 @@ for arg in "$@"; do
 done
 
 PKG_NAME="com.nhn.android.nmap"
+export API_SERVER="121.173.150.103:5003"
 
 # --- [CORE] Functions ---
 NOW() { date +"%H:%M:%S.%3N"; }
@@ -82,7 +83,7 @@ while true; do
         fi
 
         # 3. Request Task
-        API_URL="http://localhost:5003/api/v1/request?device_id=$DEV_ID"
+        API_URL="http://$API_SERVER/api/v1/request?device_id=$DEV_ID"
         RESPONSE=$(curl -s "$API_URL")
         
         if [ -z "$RESPONSE" ] || [ "$(echo "$RESPONSE" | jq -r '.status')" != "ok" ]; then
@@ -99,7 +100,7 @@ while true; do
 
         # Record Spoofed Identity
         SPOOFED_JSON=$(echo "$RESPONSE" | jq -c '.identity.spoofed')
-        curl -s -X POST "http://localhost:5003/api/v1/update_status" \
+        curl -s -X POST "http://$API_SERVER/api/v1/update_status" \
              -H "Content-Type: application/json" \
              -d "{\"log_id\": $LOG_ID, \"status\": \"ALLOCATED\", \"device_id\": \"$DEV_ID\", \"spoofed_identity\": $SPOOFED_JSON}" > /dev/null
 
