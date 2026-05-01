@@ -1,5 +1,5 @@
 #!/bin/bash
-# test_nmap_v2/macro/monitor.sh: V18.2 Silent Background Monitor
+# test_nmap_v2/macro/monitor.sh: V18.4 Packet-File Based Silence Kill
 
 DEV_ID=$1; LOG_DIR=$2; DEST_ID=$3
 [ -z "$DEV_ID" ] || [ -z "$LOG_DIR" ] && exit 1
@@ -23,6 +23,11 @@ NOW() { date +"%H:%M:%S.%3N"; }
 START_TS=$(date +%s)
 GLOBAL_TIMEOUT=$(jq -r '.config.global_timeout // 1200' "$SCHEDULE_JSON")
 
+# [V18.4] Silence Kill Variables (JSON File Count Based)
+LAST_JSON_COUNT=0
+STUCK_COUNT=0
+IS_DRIVING=false
+
 declare -A STATE_FLAGS
 
 stop_gps() {
@@ -33,7 +38,7 @@ stop_gps() {
 check_app_survival() {
     local ELAPSED=$(( $(date +%s) - START_TS ))
     
-    # 1. Global Timeout (Safety Net)
+    # 1. Global Timeout
     if [ $ELAPSED -gt "$GLOBAL_TIMEOUT" ]; then
         echo "[$(NOW)] [🚨] GLOBAL TIMEOUT EXCEEDED (${ELAPSED}s / ${GLOBAL_TIMEOUT}s). Force killing..."
         curl -s -X POST "http://localhost:5003/api/v1/update_status" -H "Content-Type: application/json" \
@@ -45,6 +50,24 @@ check_app_survival() {
     if [ $ELAPSED -gt 30 ]; then
         if ! adb -s "$DEV_ID" shell pidof "$PKG_NAME" >/dev/null 2>&1; then
             echo "[$(NOW)] [!] App process dead. Stopping scheduler."; exit 1
+        fi
+    fi
+
+    # 3. [V18.4] Packet-File Silence Kill (During Driving)
+    # 개별 요청 JSON 파일들이 새로 생성되고 있는지 숫자로 체크
+    if [ "$IS_DRIVING" = true ]; then
+        CUR_JSON_COUNT=$(ls -1 "$ABS_LOG_DIR"/*.json 2>/dev/null | wc -l)
+        if [ $CUR_JSON_COUNT -gt $LAST_JSON_COUNT ]; then
+            STUCK_COUNT=0; LAST_JSON_COUNT=$CUR_JSON_COUNT
+        else
+            ((STUCK_COUNT++))
+            # 5초 주기로 체크하므로 18번(90초) 정체 시 종료
+            if [ $STUCK_COUNT -ge 18 ]; then
+                echo "[$(NOW)] [🚨] SILENCE DETECTED (90s). No new packet JSONs. Killing session."
+                curl -s -X POST "http://localhost:5003/api/v1/update_status" -H "Content-Type: application/json" \
+                     -d "{\"log_id\": $NMAP_LOG_ID, \"status\": \"FAIL_PACKET_STUCK\", \"device_id\": \"$DEV_ID\", \"log_path\": \"$CAPTURE_LOG_DIR\"}" > /dev/null
+                stop_gps; adb -s "$DEV_ID" shell am force-stop "$PKG_NAME"; exit 1
+            fi
         fi
     fi
 }
@@ -65,15 +88,13 @@ type_destination_only() {
     echo "    > Waiting 4s for recommendation list..."; sleep 4
 }
 
-echo "[$(NOW)] [Scheduler:$DEV_ID] V18.2 Silent Mode Started."
+echo "[$(NOW)] [Scheduler:$DEV_ID] V18.4 Strict Mode Started."
 
 # === Main Loop ===
 while true; do
     check_app_survival
     
-    # [V18.2] Heartbeat print REMOVED for log purity. 
-    # Python (auto_reloader) provides unified status reports instead.
-
+    # routeend 감지
     if [[ "${STATE_FLAGS[STEP_08_DRIVING_GOAL]}" != "1" ]]; then
         if grep -q "routeend" "$ABS_LOG_DIR/events.log" 2>/dev/null; then
             echo "[$(NOW)] [🌟] CASE: routeend detected! Finalizing session."
@@ -111,6 +132,9 @@ while true; do
         if [ -n "$MATCHED_IDX" ]; then
             [ "$MATCHED_IDX" != "IMMEDIATE" ] && [ "$MATCHED_IDX" != "BYPASS" ] && echo "[$(NOW)] [✓] Detected Step: $ID"
 
+            # 주행 시작 시점 마킹
+            if [ "$ID" == "STEP_08_DRIVING" ]; then IS_DRIVING=true; fi
+
             ACTION=$(echo "$step" | jq -r '.action // empty' | tr -d '\r\n')
             if [ -n "$ACTION" ]; then
                 if [ "$ACTION" == "TYPE_DESTINATION" ]; then type_destination_only
@@ -118,7 +142,6 @@ while true; do
                     echo "[$(NOW)] [Action] Selecting Address: $NMAP_DEST_ADDR"
                     $MACRO_EXEC "$DEV_ID" "text:$NMAP_DEST_ADDR" "$CAT"
                     if [ $? -ne 0 ]; then
-                        # Report failure with Log Path and Requested Address
                         curl -s -X POST "http://localhost:5003/api/v1/update_status" -H "Content-Type: application/json" \
                              -d "{\"log_id\": $NMAP_LOG_ID, \"status\": \"FAIL_ADDRESS_NOT_FOUND\", \"device_id\": \"$DEV_ID\", \"requested_address\": \"$NMAP_DEST_ADDR\", \"log_path\": \"$CAPTURE_LOG_DIR\"}" > /dev/null
                         adb -s "$DEV_ID" shell am force-stop "$PKG_NAME"; exit 1
@@ -131,7 +154,6 @@ while true; do
                     echo "[$(NOW)] [Action] Clicking '안내시작' (Guidance Start)..."
                     $MACRO_EXEC "$DEV_ID" "$ACTION" "$CAT"
                     if [ $? -ne 0 ]; then
-                        # Report failure and EXIT to prevent infinite loop (e.g. GPS not fixed)
                         curl -s -X POST "http://localhost:5003/api/v1/update_status" -H "Content-Type: application/json" \
                              -d "{\"log_id\": $NMAP_LOG_ID, \"status\": \"FAIL_GUIDANCE_NOT_FOUND\", \"device_id\": \"$DEV_ID\", \"log_path\": \"$CAPTURE_LOG_DIR\"}" > /dev/null
                         adb -s "$DEV_ID" shell am force-stop "$PKG_NAME"; exit 1
@@ -170,5 +192,5 @@ while true; do
         PREV_STEP_DONE=false
     done < <(jq -c '.steps[]' "$SCHEDULE_JSON")
 
-    sleep 2
+    sleep 5
 done
