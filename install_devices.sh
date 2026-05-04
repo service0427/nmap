@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
 
 # Base installation path
-INSTALL_DIR="/home/tech/nmap/install"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INSTALL_DIR="$SCRIPT_DIR/install"
 CERT_PATH="$INSTALL_DIR/mitmproxy-ca-cert.crt"
 
 # Define packages and their files
 APPS=(
-    "com.nhn.android.nmap:1:$INSTALL_DIR/map_6.5.2.1/base.apk $INSTALL_DIR/map_6.5.2.1/split_config.arm64_v8a.apk $INSTALL_DIR/map_6.5.2.1/split_config.xxhdpi.apk"
+    "com.nhn.android.nmap:1:$INSTALL_DIR/com.nhn.android.nmap_6.5.2.1/base.apk $INSTALL_DIR/com.nhn.android.nmap_6.5.2.1/split_config.arm64_v8a.apk $INSTALL_DIR/com.nhn.android.nmap_6.5.2.1/split_config.xxhdpi.apk"
     "com.rosteam.gpsemulator:1:$INSTALL_DIR/gpsemulator/base.apk $INSTALL_DIR/gpsemulator/split_config.arm64_v8a.apk $INSTALL_DIR/gpsemulator/split_config.ko.apk $INSTALL_DIR/gpsemulator/split_config.xxhdpi.apk"
     "com.android.adbkeyboard:0:$INSTALL_DIR/ADBKeyboard.apk"
 )
