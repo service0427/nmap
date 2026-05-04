@@ -11,13 +11,5 @@ __pycache__/
 # Project specific
 scrcpy-mask/scrcpy-mask
 
-# Allow essential install files
-!install/*.apk
-!install/*.zip
-!install/*.crt
-!install/**/*.apk
-!install/**/*.zip
-!install/**/*.crt
-
-# Exclude large files (>100MB) for manual upload
-install/com.nhn.android.nmap_6.5.2.1/base.apk
+# Exclude large installation files (managed via cloud)
+install/
